@@ -1,0 +1,13 @@
+# ビルド成果物
+/bin/
+/sidenote
+*.exe
+
+# Go
+*.test
+*.out
+coverage.*
+
+# エディタ / OS
+.DS_Store
+*.swp
