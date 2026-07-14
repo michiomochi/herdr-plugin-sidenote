@@ -41,6 +41,41 @@ func TestParseStep(t *testing.T) {
 	}
 }
 
+func TestParseStep_Await(t *testing.T) {
+	// 末尾 :await で Await=true
+	got, err := ParseStep("リリース:todo:await")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "リリース" || got.State != state.StepTodo || !got.Await {
+		t.Fatalf("await 解釈が不正: %+v", got)
+	}
+	// await 無しは false（後方互換）
+	got, err = ParseStep("実装:doing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Await {
+		t.Fatalf("await 無しは false のはず: %+v", got)
+	}
+	// label 内に ':' を含むケース＋await
+	got, err = ParseStep("a:b:doing:await")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "a:b" || got.State != state.StepDoing || !got.Await {
+		t.Fatalf("label 内 ':' ＋await が不正: %+v", got)
+	}
+	// label 内に ':' を含み await 無し
+	got, err = ParseStep("a:b:done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "a:b" || got.State != state.StepDone || got.Await {
+		t.Fatalf("label 内 ':' await無しが不正: %+v", got)
+	}
+}
+
 func TestBuildForSet(t *testing.T) {
 	o := Options{
 		Space:    strp("my-space"),

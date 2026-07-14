@@ -169,11 +169,58 @@ func TestBuildRows_ClassifiesSteps(t *testing.T) {
 	if len(r.DoneItems) != 2 || r.DoneItems[0] != "A" || r.DoneItems[1] != "D" {
 		t.Fatalf("DoneItems 分類が不正: %+v", r.DoneItems)
 	}
-	if len(r.Doing) != 1 || r.Doing[0] != "B" {
+	if len(r.Doing) != 1 || r.Doing[0].Text != "B" {
 		t.Fatalf("Doing 分類が不正: %+v", r.Doing)
 	}
-	if len(r.Todo) != 1 || r.Todo[0] != "C" {
+	if len(r.Todo) != 1 || r.Todo[0].Text != "C" {
 		t.Fatalf("Todo 分類が不正: %+v", r.Todo)
+	}
+}
+
+func TestBuildRows_StepAwait(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "s", Headline: "h", Status: state.StatusWorking,
+			Progress: &state.Progress{Steps: []state.Step{
+				{Label: "X", State: state.StepTodo, Await: true},
+				{Label: "Y", State: state.StepDoing},
+			}},
+			UpdatedAt: "2026-07-14T11:59:00+09:00",
+		}},
+	}
+	r := BuildRows(results, now, 10*time.Minute)[0]
+	if len(r.Todo) != 1 || !r.Todo[0].Await {
+		t.Fatalf("todo の await 未反映: %+v", r.Todo)
+	}
+	if len(r.Doing) != 1 || r.Doing[0].Await {
+		t.Fatalf("doing は await=false のはず: %+v", r.Doing)
+	}
+	if !r.HasAwait() {
+		t.Fatal("HasAwait は true のはず")
+	}
+}
+
+func TestBuildRows_SortByRank(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	mk := func(space, status string, await bool) state.LoadResult {
+		var steps []state.Step
+		if await {
+			steps = []state.Step{{Label: "x", State: state.StepTodo, Await: true}}
+		}
+		return state.LoadResult{Path: "/x/" + space + ".json", State: &state.State{
+			SchemaVersion: 1, Space: space, Headline: "h", Status: status,
+			Progress: &state.Progress{Steps: steps}, UpdatedAt: "2026-07-14T11:00:00+09:00",
+		}}
+	}
+	results := []state.LoadResult{
+		mk("done1", state.StatusDone, false),    // 完了・待機 rank2
+		mk("work1", state.StatusWorking, false), // 実施中 rank1
+		mk("await1", state.StatusWorking, true), // 母艦対応待ち rank0（await 昇格）
+	}
+	rows := BuildRows(results, now, 10*time.Minute)
+	if rows[0].Space != "await1" || rows[1].Space != "work1" || rows[2].Space != "done1" {
+		t.Fatalf("ランク順が不正: %s, %s, %s", rows[0].Space, rows[1].Space, rows[2].Space)
 	}
 }
 
@@ -250,90 +297,18 @@ func TestBuildRows_Blockers(t *testing.T) {
 	}
 }
 
-func TestGroupOf(t *testing.T) {
-	cases := []struct {
-		name string
-		r    Row
-		want GroupKind
-	}{
-		{"blocked→要対応", Row{Status: state.StatusBlocked}, GroupAttention},
-		{"review→要対応", Row{Status: state.StatusReview}, GroupAttention},
-		{"working→実施中", Row{Status: state.StatusWorking}, GroupActive},
-		{"planning→実施中", Row{Status: state.StatusPlanning}, GroupActive},
-		{"done→完了待機", Row{Status: state.StatusDone}, GroupWaiting},
-		{"blockers非空のworkingは昇格", Row{Status: state.StatusWorking, Blockers: []string{"x"}}, GroupAttention},
-		{"broken→完了待機", Row{Broken: true}, GroupWaiting},
-		{"skeleton(status空)→完了待機", Row{Status: "", skeleton: true}, GroupWaiting},
+func TestBuildRows_BrokenSortsLast(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/broken.json", Err: filepath.ErrBadPattern},
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "done1", Headline: "h", Status: state.StatusDone,
+			UpdatedAt: "2026-07-14T11:00:00+09:00",
+		}},
 	}
-	for _, c := range cases {
-		if got := groupOf(c.r); got != c.want {
-			t.Errorf("%s: got %v want %v", c.name, got, c.want)
-		}
-	}
-}
-
-func TestGroupRows_OrderAndTitles(t *testing.T) {
-	rows := []Row{
-		{Space: "a", Status: state.StatusWorking},
-		{Space: "b", Status: state.StatusReview},
-		{Space: "c", Status: state.StatusDone},
-	}
-	groups := GroupRows(rows)
-	if len(groups) != 3 {
-		t.Fatalf("3 グループのはず: %d", len(groups))
-	}
-	if groups[0].Kind != GroupAttention || groups[1].Kind != GroupActive || groups[2].Kind != GroupWaiting {
-		t.Fatalf("グループ順が不正: %+v", groups)
-	}
-	if groups[0].Title == "" || groups[1].Title == "" || groups[2].Title == "" {
-		t.Fatalf("Title が空: %+v", groups)
-	}
-}
-
-func TestGroupRows_SkipsEmptyGroups(t *testing.T) {
-	// 要母艦対応が空
-	rows := []Row{
-		{Space: "a", Status: state.StatusWorking},
-		{Space: "c", Status: state.StatusDone},
-	}
-	groups := GroupRows(rows)
-	if len(groups) != 2 {
-		t.Fatalf("空グループ省略で 2 つのはず: %d (%+v)", len(groups), groups)
-	}
-	if groups[0].Kind != GroupActive {
-		t.Fatalf("先頭は実施中のはず: %+v", groups[0])
-	}
-}
-
-func TestGroupRows_PreservesOrderWithinGroup(t *testing.T) {
-	rows := []Row{
-		{Space: "first", Status: state.StatusWorking},
-		{Space: "second", Status: state.StatusPlanning},
-	}
-	groups := GroupRows(rows)
-	if len(groups[0].Rows) != 2 || groups[0].Rows[0].Space != "first" || groups[0].Rows[1].Space != "second" {
-		t.Fatalf("グループ内順序が保持されていない: %+v", groups[0].Rows)
-	}
-}
-
-func TestGroupRows_BrokenGoesToWaitingLast(t *testing.T) {
-	rows := []Row{
-		{Space: "ok", Status: state.StatusDone},
-		{Space: "broken", Broken: true}, // 入力上すでに末尾（sortRows 済み想定）
-	}
-	groups := GroupRows(rows)
-	if len(groups) != 1 || groups[0].Kind != GroupWaiting {
-		t.Fatalf("完了待機 1 グループのはず: %+v", groups)
-	}
-	last := groups[0].Rows[len(groups[0].Rows)-1]
-	if !last.Broken {
-		t.Fatal("broken が完了待機の末尾でない")
-	}
-}
-
-func TestGroupRows_Empty(t *testing.T) {
-	if g := GroupRows(nil); len(g) != 0 {
-		t.Fatalf("空入力は空グループ: %+v", g)
+	rows := BuildRows(results, now, 10*time.Minute)
+	if rows[len(rows)-1].Space != "broken" || !rows[len(rows)-1].Broken {
+		t.Fatalf("broken は末尾のはず: %+v", rows)
 	}
 }
 

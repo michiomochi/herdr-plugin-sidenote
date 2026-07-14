@@ -153,6 +153,39 @@ func TestFileName(t *testing.T) {
 	}
 }
 
+func TestStep_AwaitRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := validState()
+	s.Progress = &Progress{Steps: []Step{{Label: "X", State: StepTodo, Await: true}}}
+	if err := Save(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(filepath.Join(dir, FileName(s)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Progress.Steps[0].Await {
+		t.Fatal("await が往復で失われた")
+	}
+}
+
+func TestStep_AwaitBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	// await 無しの旧 step JSON → false（後方互換）
+	j := `{"schema_version":1,"space":"x","headline":"h","status":"working","progress":{"steps":[{"label":"X","state":"todo"}]},"updated_at":"2026-07-14T10:00:00+09:00"}`
+	p := filepath.Join(dir, "a.json")
+	if err := os.WriteFile(p, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Progress.Steps[0].Await {
+		t.Fatal("await 無しは false であるべき")
+	}
+}
+
 func TestAppendDoneEntry(t *testing.T) {
 	log := AppendDoneEntry(nil, "A完了", "2026-07-14T10:00:00+09:00")
 	if len(log) != 1 || log[0].Text != "A完了" || log[0].At == "" {

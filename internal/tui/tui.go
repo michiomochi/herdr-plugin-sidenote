@@ -188,6 +188,12 @@ var (
 	// 表示レビューで「まだ暗い」との指摘を受け、さらに明るく調整（244→247 / 250→253）。
 	staleHeadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
 	staleBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("253"))
+
+	// TODO 項目の状態別色（fresh 時のみ適用。stale 時は staleBodyStyle に統一）。
+	doneItemStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))             // 完了=緑
+	doingItemStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))  // 進行中=太字白
+	todoItemStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // 予定=グレー
+	awaitLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")) // 母艦対応待ち=赤
 )
 
 func statusStyle(status string) lipgloss.Style {
@@ -228,100 +234,34 @@ func (m model) View() string {
 		return header + "\n\n" + dimStyle.Render("表示できる space がありません。母艦が sidenote set で状況を書き込むと表示されます。")
 	}
 
-	groups := view.GroupRows(m.rows)
+	// グルーピング見出しは廃止。m.rows は view 側で
+	// 「母艦対応待ち → 実施中 → 完了・待機」の順にソート済み。
+	// ブロック単位で端末高さに収まるだけ詰め、溢れは末尾に「…他 N 件」。
 	lines := []string{header, ""}
-
-	// 端末高さに収まるよう、要母艦対応グループから順に「ブロック単位」で詰める。
-	// 見出しも 1 行として数え、入り切らなくなったら打ち切り末尾に「…他 N 件」。
 	avail := 0
 	if m.height > 0 {
 		avail = m.height - (strings.Count(header, "\n") + 1) - 1 // ヘッダ＋余白
 	}
-	total := len(m.rows)
 	shown := 0
 	used := 0
-	clipped := false
-
-	limited := m.height > 0
-	overflow := func(n int) bool {
-		// shown>0 のとき、n 行＋「…他 N 件」ぶんを入れると溢れるか
-		return limited && shown > 0 && used+n+1 > avail
-	}
-
-groupLoop:
-	for gi, g := range groups {
-		headLine := groupHeaderStyle(g.Kind).Render(
-			fmt.Sprintf("%s %s (%d)", groupSymbol(g.Kind), g.Title, len(g.Rows)))
-
-		// 見出しは「見出し＋最低 1 ブロック」が入るときだけ出す（見出しの空振り防止）。
-		firstBlock := m.renderBlock(g.Rows[0], width)
-		need := len(firstBlock) + 1 // 見出し
-		if gi > 0 {
-			need++ // グループ間の空行
+	for _, r := range m.rows {
+		block := m.renderBlock(r, width)
+		// 次のブロック＋（間の空行）＋「…他 N 件」ぶんが入らなければ打ち切る
+		if m.height > 0 && shown > 0 && used+1+len(block)+1 > avail {
+			break
 		}
-		if overflow(need) {
-			clipped = true
-			break groupLoop
-		}
-		if gi > 0 {
-			lines = append(lines, "")
+		if shown > 0 {
+			lines = append(lines, "") // ブロック間の空行
 			used++
 		}
-		lines = append(lines, headLine)
-		used++
-
-		for bi, r := range g.Rows {
-			block := firstBlock
-			if bi > 0 {
-				block = m.renderBlock(r, width)
-			}
-			sep := 0
-			if bi > 0 {
-				sep = 1 // グループ内ブロック間の空行
-			}
-			if overflow(sep + len(block)) {
-				clipped = true
-				break groupLoop
-			}
-			if bi > 0 {
-				lines = append(lines, "")
-				used++
-			}
-			lines = append(lines, block...)
-			used += len(block)
-			shown++
-		}
+		lines = append(lines, block...)
+		used += len(block)
+		shown++
 	}
-
-	if clipped || shown < total {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", total-shown)))
+	if shown < len(m.rows) {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", len(m.rows)-shown)))
 	}
 	return join(lines)
-}
-
-// groupSymbol はセクション見出しの記号を返す。
-func groupSymbol(k view.GroupKind) string {
-	switch k {
-	case view.GroupAttention:
-		return "●"
-	case view.GroupActive:
-		return "▸"
-	default:
-		return "✓"
-	}
-}
-
-// groupHeaderStyle はセクション見出しの色。要対応は目を引く色、実施中は通常、
-// 完了・待機は弱め（dim 2階調と整合）。
-func groupHeaderStyle(k view.GroupKind) lipgloss.Style {
-	switch k {
-	case view.GroupAttention:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true) // 赤系で注意喚起
-	case view.GroupActive:
-		return lipgloss.NewStyle().Bold(true)
-	default:
-		return staleHeadStyle // 完了・待機は弱いグレー
-	}
 }
 
 // renderBlock は 1 space を複数行ブロック（ヘッダ＋headline＋済/いま/予定/障害）
@@ -329,12 +269,24 @@ func groupHeaderStyle(k view.GroupKind) lipgloss.Style {
 // stale な space はブロック全体をグレーアウトする。
 func (m model) renderBlock(r view.Row, width int) []string {
 	trunc := func(s string) string { return runewidth.Truncate(s, width, "…") }
-	// stale の本文は「読める明るいグレー」に留める（濃い dim にしない）。
-	body := func(s string) string {
-		if r.Stale {
-			return staleBodyStyle.Render(s)
+	// TODO 項目を 1 行描画する。fresh 時は状態別色、stale 時は弱グレー統一。
+	// await（母艦対応待ち）は行動シグナルなので、stale でも赤ラベルを右に残す。
+	awaitLabel := "〈母艦対応待ち〉"
+	renderItem := func(marker, text string, itemStyle lipgloss.Style, await bool) string {
+		w := width
+		if await {
+			w = max(width-runewidth.StringWidth(awaitLabel)-1, 4)
 		}
-		return s
+		content := runewidth.Truncate("    "+marker+" "+text, w, "…")
+		if r.Stale {
+			content = staleBodyStyle.Render(content)
+		} else {
+			content = itemStyle.Render(content)
+		}
+		if await {
+			content += " " + awaitLabelStyle.Render(awaitLabel)
+		}
+		return content
 	}
 
 	if r.Broken {
@@ -363,36 +315,25 @@ func (m model) renderBlock(r view.Row, width int) []string {
 		lines = append(lines, statusStyle(r.Status).Bold(true).Render(head))
 	}
 
-	headline := r.Headline
-	if headline == "" {
-		headline = "-"
-	}
-	lines = append(lines, body(trunc("    "+headline)))
-
-	// 1 列の TODO リスト: 済み(✓)→いま(→)→予定(□) の順、1 項目 1 行。
+	// headline 行は廃止（やることは TODO リストに集約）。
+	// 1 列 TODO: 済み(✓緑)→いま(→太字白)→予定(□グレー) の順、1 項目 1 行。
 	for _, t := range r.DoneItems {
-		lines = append(lines, body(trunc("    ✓ "+t)))
+		lines = append(lines, renderItem("✓", t, doneItemStyle, false))
 	}
 	if r.DoneOverflow > 0 {
-		lines = append(lines, body(trunc(fmt.Sprintf("    ✓ …他 %d 件", r.DoneOverflow))))
+		lines = append(lines, renderItem("✓", fmt.Sprintf("…他 %d 件", r.DoneOverflow), doneItemStyle, false))
 	}
-	for _, t := range r.Doing {
-		lines = append(lines, body(trunc("    → "+t)))
+	for _, it := range r.Doing {
+		lines = append(lines, renderItem("→", it.Text, doingItemStyle, it.Await))
 	}
-	for _, t := range r.Todo {
-		lines = append(lines, body(trunc("    □ "+t)))
+	for _, it := range r.Todo {
+		lines = append(lines, renderItem("□", it.Text, todoItemStyle, it.Await))
 	}
 	if r.Next != "" {
-		lines = append(lines, body(trunc("    □ "+r.Next)))
+		lines = append(lines, renderItem("□", r.Next, todoItemStyle, false))
 	}
 	if len(r.Blockers) > 0 {
-		bl := trunc("    ⚠ 障害 " + strings.Join(r.Blockers, " ・ "))
-		if r.Stale {
-			bl = staleBodyStyle.Render(bl) // 古くても本文は読める明るさに
-		} else {
-			bl = brokenStyle.Render(bl)
-		}
-		lines = append(lines, bl)
+		lines = append(lines, renderItem("⚠", "障害 "+strings.Join(r.Blockers, " ・ "), brokenStyle, false))
 	}
 	return lines
 }

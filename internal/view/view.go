@@ -59,8 +59,8 @@ type Row struct {
 	Blockers     []string
 	DoneItems    []string // 済み（done_log 直近＋steps.done 合成、新しい順）
 	DoneOverflow int      // 済みの表示上限を超えた件数
-	Doing        []string // steps.state==doing の label（現在）
-	Todo         []string // steps.state==todo の label（今後の予定）
+	Doing        []Item   // 進行中（steps.state==doing）
+	Todo         []Item   // 予定（steps.state==todo）
 	Age          string
 	updated      time.Time
 	hasTime      bool
@@ -69,6 +69,28 @@ type Row struct {
 	FutureSchema bool // 本実装より新しいスキーマ
 	InHerdr      bool // herdr の workspace 一覧に存在するか（M4）
 	skeleton     bool // 骨格のみ（state ファイルが無い）行
+}
+
+// Item は TODO リストの 1 項目（進行中・予定）。Await は母艦対応待ちを示す。
+type Item struct {
+	Text  string
+	State string // doing / todo
+	Await bool
+}
+
+// HasAwait は行内に母艦対応待ちの項目があるかを返す。
+func (r Row) HasAwait() bool {
+	for _, it := range r.Doing {
+		if it.Await {
+			return true
+		}
+	}
+	for _, it := range r.Todo {
+		if it.Await {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildRows は state のロード結果から表示行を構築する。
@@ -115,11 +137,30 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 	return rows
 }
 
-// sortRows は「壊れた行は末尾、それ以外は更新時刻の新しい順」に並べる。
-// 時刻が同じ/無い場合は space 名で安定化する。
+// spaceRank は space の優先度（0=母艦対応待ち, 1=実施中, 2=完了・待機/壊れ）。
+// グルーピング見出しは廃止し、この順序のみで俯瞰を担保する。
+// 母艦 status を基準にし、herdr の agent_status は分類に使わない。
+func spaceRank(r Row) int {
+	if r.Broken {
+		return 2
+	}
+	if r.HasAwait() || len(r.Blockers) > 0 || r.Status == state.StatusBlocked || r.Status == state.StatusReview {
+		return 0 // per-item 待ち／ブロッカー／blocked・review は母艦対応待ち
+	}
+	if r.Status == state.StatusWorking || r.Status == state.StatusPlanning {
+		return 1
+	}
+	return 2 // done / skeleton
+}
+
+// sortRows は「母艦対応待ち → 実施中 → 完了・待機」の順に並べ、同順位内は
+// 壊れた行を末尾、それ以外は更新時刻の新しい順、最後に space 名で安定化する。
 func sortRows(rows []Row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
+		if ra, rb := spaceRank(a), spaceRank(b); ra != rb {
+			return ra < rb
+		}
 		if a.Broken != b.Broken {
 			return !a.Broken // 壊れていない方が先
 		}
@@ -136,70 +177,6 @@ func sortRows(rows []Row) {
 func baseName(p string) string {
 	b := filepath.Base(p)
 	return strings.TrimSuffix(b, ".json")
-}
-
-// GroupKind は space をセクション分けするグループ種別。
-type GroupKind int
-
-const (
-	// GroupAttention は母艦（人間）の対応が必要な space（blocked/review/ブロッカーあり）。
-	GroupAttention GroupKind = iota
-	// GroupActive は各 space で実施中（working/planning）。
-	GroupActive
-	// GroupWaiting は完了・待機（done / skeleton / broken）。
-	GroupWaiting
-)
-
-// Group はセクション（見出し＋所属行）。Title はプレーンな見出し語で、
-// 記号・件数・色付けは描画側（tui）の責務とする。
-type Group struct {
-	Kind  GroupKind
-	Title string
-	Rows  []Row
-}
-
-var groupTitles = map[GroupKind]string{
-	GroupAttention: "要母艦対応",
-	GroupActive:    "実施中",
-	GroupWaiting:   "完了・待機",
-}
-
-// groupOf は行の所属グループを母艦 status ベースで判定する（上から評価）。
-// herdr の agent_status は分類に使わない（ヘッダ併記のみ）。
-func groupOf(r Row) GroupKind {
-	switch {
-	case r.Broken:
-		return GroupWaiting
-	case len(r.Blockers) > 0:
-		return GroupAttention // status=working でも取りこぼし防止で昇格
-	case r.Status == state.StatusBlocked || r.Status == state.StatusReview:
-		return GroupAttention
-	case r.Status == state.StatusWorking || r.Status == state.StatusPlanning:
-		return GroupActive
-	default:
-		// done / skeleton(status=="") など
-		return GroupWaiting
-	}
-}
-
-// GroupRows はソート済みの rows を固定グループ順
-// （要母艦対応 → 実施中 → 完了・待機）に安定分配する。
-// 空グループは省略し、グループ内の順序は入力順（＝既存ソート）を保つ。
-func GroupRows(rows []Row) []Group {
-	buckets := map[GroupKind][]Row{}
-	for _, r := range rows {
-		k := groupOf(r)
-		buckets[k] = append(buckets[k], r)
-	}
-	order := []GroupKind{GroupAttention, GroupActive, GroupWaiting}
-	out := make([]Group, 0, len(order))
-	for _, k := range order {
-		if len(buckets[k]) == 0 {
-			continue // 空グループは見出しごと省略
-		}
-		out = append(out, Group{Kind: k, Title: groupTitles[k], Rows: buckets[k]})
-	}
-	return out
 }
 
 // DisplayDoneLimit は「済み」の表示件数上限（超過分は …他 N 件）。
@@ -221,7 +198,7 @@ func buildDoneItems(doneLog []state.DoneEntry, stepsDone []string, limit int) (i
 
 // classifySteps は progress.steps を done/doing/todo の 3 群（label 配列）に
 // 分類する。過去（Done）・現在（Doing）・未来（Todo）の複数行表示に使う。
-func classifySteps(p *state.Progress) (done, doing, todo []string) {
+func classifySteps(p *state.Progress) (done []string, doing, todo []Item) {
 	if p == nil {
 		return nil, nil, nil
 	}
@@ -230,9 +207,9 @@ func classifySteps(p *state.Progress) (done, doing, todo []string) {
 		case state.StepDone:
 			done = append(done, s.Label)
 		case state.StepDoing:
-			doing = append(doing, s.Label)
+			doing = append(doing, Item{Text: s.Label, State: state.StepDoing, Await: s.Await})
 		case state.StepTodo:
-			todo = append(todo, s.Label)
+			todo = append(todo, Item{Text: s.Label, State: state.StepTodo, Await: s.Await})
 		}
 	}
 	return done, doing, todo

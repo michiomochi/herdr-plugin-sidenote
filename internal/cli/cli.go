@@ -30,12 +30,19 @@ type Options struct {
 	Notes       *[]string
 }
 
-// ParseStep は "label:state" 形式を state.Step にパースする。
-// label に ':' を含む場合は最後の ':' で分割する。
+// ParseStep は "label:state" または "label:state:await" 形式を state.Step に
+// パースする。末尾が正確に ":await" のときだけ先に剥がして Await=true とし、
+// 残りを label:state（最後の ':' で分割）として解釈するため、label に ':' を
+// 含むケースとも両立する。
 func ParseStep(s string) (state.Step, error) {
+	await := false
+	if strings.HasSuffix(s, ":await") {
+		await = true
+		s = strings.TrimSuffix(s, ":await")
+	}
 	i := strings.LastIndex(s, ":")
 	if i < 0 {
-		return state.Step{}, fmt.Errorf("step は \"label:state\" 形式: %q", s)
+		return state.Step{}, fmt.Errorf("step は \"label:state[:await]\" 形式: %q", s)
 	}
 	label := strings.TrimSpace(s[:i])
 	st := strings.TrimSpace(s[i+1:])
@@ -47,7 +54,7 @@ func ParseStep(s string) (state.Step, error) {
 	default:
 		return state.Step{}, fmt.Errorf("step の state が不正 (todo/doing/done): %q", st)
 	}
-	return state.Step{Label: label, State: st}, nil
+	return state.Step{Label: label, State: st, Await: await}, nil
 }
 
 // BuildForSet は set 用に新しい State を構築する（未指定項目はゼロ値）。

@@ -84,9 +84,11 @@ type Progress struct {
 }
 
 // Step は progress.steps の 1 要素。
+// Await はその項目が母艦（人間）の対応待ちであることを示す（per-item 待ち）。
 type Step struct {
 	Label string `json:"label"`
 	State string `json:"state"`
+	Await bool   `json:"await,omitempty"`
 }
 
 // IsFutureSchema は state が本実装より新しいスキーマで書かれているかを返す。
