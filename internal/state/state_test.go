@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,78 @@ func TestFileName(t *testing.T) {
 	s.WorkspaceID = "a/b"
 	if got := FileName(s); strings.ContainsRune(got, '/') {
 		t.Fatalf("パス区切りが残っている: %s", got)
+	}
+}
+
+func TestAppendDoneEntry(t *testing.T) {
+	log := AppendDoneEntry(nil, "A完了", "2026-07-14T10:00:00+09:00")
+	if len(log) != 1 || log[0].Text != "A完了" || log[0].At == "" {
+		t.Fatalf("1件目が不正: %+v", log)
+	}
+	log = AppendDoneEntry(log, "B完了", "2026-07-14T11:00:00+09:00")
+	if len(log) != 2 || log[1].Text != "B完了" {
+		t.Fatalf("末尾が最新であるべき: %+v", log)
+	}
+}
+
+func TestAppendDoneEntry_Cap(t *testing.T) {
+	var log []DoneEntry
+	for i := range MaxDoneLog + 50 {
+		log = AppendDoneEntry(log, fmt.Sprintf("item%d", i), "2026-07-14T10:00:00+09:00")
+	}
+	if len(log) != MaxDoneLog {
+		t.Fatalf("上限 %d で丸めるべき: %d", MaxDoneLog, len(log))
+	}
+	// 最新が末尾、古い順に切り捨て
+	if log[len(log)-1].Text != fmt.Sprintf("item%d", MaxDoneLog+50-1) {
+		t.Fatalf("最新が末尾でない: %s", log[len(log)-1].Text)
+	}
+	if log[0].Text != fmt.Sprintf("item%d", 50) {
+		t.Fatalf("古いものが切り捨てられていない: %s", log[0].Text)
+	}
+}
+
+func TestSaveLoad_DoneLog(t *testing.T) {
+	dir := t.TempDir()
+	s := validState()
+	s.DoneLog = []DoneEntry{
+		{At: "2026-07-14T10:00:00+09:00", Text: "done1"},
+		{At: "2026-07-14T11:00:00+09:00", Text: "done2"},
+	}
+	if err := Save(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(filepath.Join(dir, FileName(s)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.DoneLog) != 2 || got.DoneLog[1].Text != "done2" {
+		t.Fatalf("done_log が往復で失われた: %+v", got.DoneLog)
+	}
+}
+
+func TestLoad_NoDoneLogBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	// done_log の無い旧 state
+	old := `{"schema_version":1,"space":"x","headline":"h","status":"working","updated_at":"2026-07-14T10:50:00+09:00"}`
+	p := filepath.Join(dir, "old.json")
+	if err := os.WriteFile(p, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("done_log 無しの旧 state が読めない: %v", err)
+	}
+	if got.DoneLog != nil {
+		t.Fatalf("done_log 無しは nil のはず: %+v", got.DoneLog)
+	}
+}
+
+func TestValidate_DoneLogEmptyText(t *testing.T) {
+	s := validState()
+	s.DoneLog = []DoneEntry{{At: "2026-07-14T10:00:00+09:00", Text: ""}}
+	if err := Validate(s); err == nil {
+		t.Fatal("done_log の空 text は検証エラーにすべき")
 	}
 }
 

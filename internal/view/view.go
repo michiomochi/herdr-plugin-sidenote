@@ -57,7 +57,8 @@ type Row struct {
 	Headline     string
 	Next         string
 	Blockers     []string
-	Done         []string // steps.state==done の label（過去・完了）
+	DoneItems    []string // 済み（done_log 直近＋steps.done 合成、新しい順）
+	DoneOverflow int      // 済みの表示上限を超えた件数
 	Doing        []string // steps.state==doing の label（現在）
 	Todo         []string // steps.state==todo の label（今後の予定）
 	Age          string
@@ -85,6 +86,7 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 		}
 		s := r.State
 		done, doing, todo := classifySteps(s.Progress)
+		doneItems, doneOverflow := buildDoneItems(s.DoneLog, done, DisplayDoneLimit)
 		row := Row{
 			Key:          s.Key(),
 			Space:        s.Space,
@@ -93,7 +95,8 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 			Headline:     s.Headline,
 			Next:         s.Next,
 			Blockers:     s.Blockers,
-			Done:         done,
+			DoneItems:    doneItems,
+			DoneOverflow: doneOverflow,
 			Doing:        doing,
 			Todo:         todo,
 			FutureSchema: s.IsFutureSchema(),
@@ -197,6 +200,23 @@ func GroupRows(rows []Row) []Group {
 		out = append(out, Group{Kind: k, Title: groupTitles[k], Rows: buckets[k]})
 	}
 	return out
+}
+
+// DisplayDoneLimit は「済み」の表示件数上限（超過分は …他 N 件）。
+const DisplayDoneLimit = 5
+
+// buildDoneItems は済みの表示リストを作る。done_log を新しい順（末尾が最新）に
+// 並べ、後方互換で steps.done を後ろに合成し、limit で丸めて超過数を返す。
+func buildDoneItems(doneLog []state.DoneEntry, stepsDone []string, limit int) (items []string, overflow int) {
+	combined := make([]string, 0, len(doneLog)+len(stepsDone))
+	for i := len(doneLog) - 1; i >= 0; i-- {
+		combined = append(combined, doneLog[i].Text)
+	}
+	combined = append(combined, stepsDone...)
+	if limit > 0 && len(combined) > limit {
+		return combined[:limit], len(combined) - limit
+	}
+	return combined, 0
 }
 
 // classifySteps は progress.steps を done/doing/todo の 3 群（label 配列）に

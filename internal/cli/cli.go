@@ -135,16 +135,42 @@ func cloneState(in *state.State) *state.State {
 	if in.Notes != nil {
 		out.Notes = append([]string(nil), in.Notes...)
 	}
+	if in.DoneLog != nil {
+		out.DoneLog = append([]state.DoneEntry(nil), in.DoneLog...)
+	}
 	return &out
 }
 
 // Set は set コマンド本体。State を構築して dir に保存する。
+// done_log は set の上書き対象外とし、既存ファイルがあれば引き継ぐ（非破壊）。
 func Set(dir string, o Options, now string) error {
 	s, err := BuildForSet(o, now)
 	if err != nil {
 		return err
 	}
+	if existing, lerr := state.Load(filepath.Join(dir, state.FileNameForKey(s.Key()))); lerr == nil && existing != nil {
+		s.DoneLog = existing.DoneLog
+	}
 	return state.Save(dir, s)
+}
+
+// Done は done コマンド本体。key に対応する既存 State の done_log に
+// {at: now, text} を append する（上限は state 側で丸め）。
+func Done(dir, key, text, now string) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("--text は必須です")
+	}
+	path := filepath.Join(dir, state.FileNameForKey(key))
+	existing, err := state.Load(path)
+	if err != nil {
+		return fmt.Errorf("done の対象が読み込めない (%s): %w", key, err)
+	}
+	existing.DoneLog = state.AppendDoneEntry(existing.DoneLog, text, now)
+	existing.UpdatedAt = now // 完了追記も更新とみなし鮮度を進める
+	if err := state.Validate(existing); err != nil {
+		return err
+	}
+	return state.Save(dir, existing)
 }
 
 // Update は update コマンド本体。dir 内の key に対応する既存 State を

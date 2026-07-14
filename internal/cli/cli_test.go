@@ -246,6 +246,83 @@ func TestSetUpdateClear_KeyWithSlashSymmetry(t *testing.T) {
 	}
 }
 
+func seedW1(t *testing.T, dir string) {
+	t.Helper()
+	if err := Set(dir, Options{
+		Space: strp("s"), WorkspaceID: strp("w1"),
+		Headline: strp("h"), Status: strp(state.StatusWorking),
+	}, testNow); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDone_Appends(t *testing.T) {
+	dir := t.TempDir()
+	seedW1(t, dir)
+	if err := Done(dir, "w1", "A完了", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Done(dir, "w1", "B完了", testNow); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := state.Load(filepath.Join(dir, "w1.json"))
+	if len(loaded.DoneLog) != 2 || loaded.DoneLog[1].Text != "B完了" {
+		t.Fatalf("done_log 積み上げが不正: %+v", loaded.DoneLog)
+	}
+}
+
+func TestDone_MissingTargetFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := Done(dir, "nope", "x", testNow); err == nil {
+		t.Fatal("存在しない対象の done はエラーにすべき")
+	}
+}
+
+func TestDone_EmptyTextFails(t *testing.T) {
+	dir := t.TempDir()
+	seedW1(t, dir)
+	if err := Done(dir, "w1", "   ", testNow); err == nil {
+		t.Fatal("空 text はエラーにすべき")
+	}
+}
+
+func TestSet_PreservesDoneLog(t *testing.T) {
+	dir := t.TempDir()
+	seedW1(t, dir)
+	if err := Done(dir, "w1", "済1", testNow); err != nil {
+		t.Fatal(err)
+	}
+	// set し直す（他フィールドは上書き、done_log は保持されるべき）
+	if err := Set(dir, Options{
+		Space: strp("s"), WorkspaceID: strp("w1"),
+		Headline: strp("更新後"), Status: strp(state.StatusReview),
+	}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := state.Load(filepath.Join(dir, "w1.json"))
+	if len(loaded.DoneLog) != 1 || loaded.DoneLog[0].Text != "済1" {
+		t.Fatalf("set が done_log を消した: %+v", loaded.DoneLog)
+	}
+	if loaded.Headline != "更新後" || loaded.Status != state.StatusReview {
+		t.Fatalf("他フィールドは上書きされるべき: %+v", loaded)
+	}
+}
+
+func TestUpdate_PreservesDoneLog(t *testing.T) {
+	dir := t.TempDir()
+	seedW1(t, dir)
+	if err := Done(dir, "w1", "済1", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(dir, "w1", Options{Status: strp(state.StatusDone)}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := state.Load(filepath.Join(dir, "w1.json"))
+	if len(loaded.DoneLog) != 1 {
+		t.Fatalf("update が done_log を消した: %+v", loaded.DoneLog)
+	}
+}
+
 func TestClear_MissingIsError(t *testing.T) {
 	dir := t.TempDir()
 	if err := Clear(dir, "nope"); err == nil {

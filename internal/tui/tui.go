@@ -184,9 +184,10 @@ var (
 
 	// stale ブロック用。ブロック全体を一律に濃くグレーアウトすると本文が
 	// 読めなくなるため、ヘッダ（鮮度の手掛かり）はやや弱いグレー、本文は
-	// 読める明るいグレーに留める（faint 属性は使わない）。
-	staleHeadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	staleBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	// しっかり読める明るいグレーに留める（faint 属性は使わない）。
+	// 表示レビューで「まだ暗い」との指摘を受け、さらに明るく調整（244→247 / 250→253）。
+	staleHeadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+	staleBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("253"))
 )
 
 func statusStyle(status string) lipgloss.Style {
@@ -368,23 +369,21 @@ func (m model) renderBlock(r view.Row, width int) []string {
 	}
 	lines = append(lines, body(trunc("    "+headline)))
 
-	if len(r.Done) > 0 {
-		lines = append(lines, body(trunc("    ✓ 済   "+strings.Join(r.Done, " ・ "))))
+	// 1 列の TODO リスト: 済み(✓)→いま(→)→予定(□) の順、1 項目 1 行。
+	for _, t := range r.DoneItems {
+		lines = append(lines, body(trunc("    ✓ "+t)))
 	}
-	if len(r.Doing) > 0 {
-		lines = append(lines, body(trunc("    ▸ いま "+strings.Join(r.Doing, " ・ "))))
+	if r.DoneOverflow > 0 {
+		lines = append(lines, body(trunc(fmt.Sprintf("    ✓ …他 %d 件", r.DoneOverflow))))
 	}
-	// 「予定」= 未着手ステップ（todo）＋ next（次の一手）
-	planned := strings.Join(r.Todo, " ・ ")
+	for _, t := range r.Doing {
+		lines = append(lines, body(trunc("    → "+t)))
+	}
+	for _, t := range r.Todo {
+		lines = append(lines, body(trunc("    □ "+t)))
+	}
 	if r.Next != "" {
-		if planned != "" {
-			planned += " → " + r.Next
-		} else {
-			planned = r.Next
-		}
-	}
-	if planned != "" {
-		lines = append(lines, body(trunc("    ○ 予定 "+planned)))
+		lines = append(lines, body(trunc("    □ "+r.Next)))
 	}
 	if len(r.Blockers) > 0 {
 		bl := trunc("    ⚠ 障害 " + strings.Join(r.Blockers, " ・ "))

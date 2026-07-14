@@ -31,6 +31,8 @@ func main() {
 		err = runSet(args)
 	case "update":
 		err = runUpdate(args)
+	case "done":
+		err = runDone(args)
 	case "clear":
 		err = runClear(args)
 	case "list":
@@ -58,6 +60,7 @@ func usage() {
   sidenote watch  [--dir DIR] [--interval SEC]
   sidenote set    --space S [--workspace-id W] --headline H --status ST [オプション]
   sidenote update --key K [変更するフィールドのみ]
+  sidenote done   --key K --text "完了項目"   （完了履歴に積む）
   sidenote clear  --key K
   sidenote list   [--dir DIR]
 
@@ -216,6 +219,27 @@ func runUpdate(args []string) error {
 		return err
 	}
 	return cli.Update(d, *key, o, nowRFC3339())
+}
+
+func runDone(args []string) error {
+	fs := flag.NewFlagSet("done", flag.ExitOnError)
+	dir := fs.String("dir", "", "state ディレクトリ")
+	key := fs.String("key", "", "対象キー（workspace-id か space）")
+	text := fs.String("text", "", "完了項目のテキスト")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *key == "" {
+		return fmt.Errorf("--key で対象を指定してください")
+	}
+	if *text == "" {
+		return fmt.Errorf("--text で完了項目を指定してください")
+	}
+	d, err := resolveDir(*dir)
+	if err != nil {
+		return err
+	}
+	return cli.Done(d, *key, *text, nowRFC3339())
 }
 
 func runClear(args []string) error {

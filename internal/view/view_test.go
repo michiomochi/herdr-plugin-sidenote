@@ -1,6 +1,7 @@
 package view
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -164,8 +165,9 @@ func TestBuildRows_ClassifiesSteps(t *testing.T) {
 		}},
 	}
 	r := BuildRows(results, now, 10*time.Minute)[0]
-	if len(r.Done) != 2 || r.Done[0] != "A" || r.Done[1] != "D" {
-		t.Fatalf("Done 分類が不正: %+v", r.Done)
+	// done_log 無し → steps.done が DoneItems に合成される（後方互換）
+	if len(r.DoneItems) != 2 || r.DoneItems[0] != "A" || r.DoneItems[1] != "D" {
+		t.Fatalf("DoneItems 分類が不正: %+v", r.DoneItems)
 	}
 	if len(r.Doing) != 1 || r.Doing[0] != "B" {
 		t.Fatalf("Doing 分類が不正: %+v", r.Doing)
@@ -184,8 +186,52 @@ func TestBuildRows_NoStepsEmptyClassification(t *testing.T) {
 		}},
 	}
 	r := BuildRows(results, now, 10*time.Minute)[0]
-	if len(r.Done) != 0 || len(r.Doing) != 0 || len(r.Todo) != 0 {
+	if len(r.DoneItems) != 0 || len(r.Doing) != 0 || len(r.Todo) != 0 {
 		t.Fatalf("steps 無しは空分類のはず: %+v", r)
+	}
+}
+
+func TestBuildRows_DoneLogNewestFirst(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "s", Headline: "h", Status: state.StatusWorking,
+			DoneLog: []state.DoneEntry{ // 末尾が最新
+				{At: "t1", Text: "古い完了"},
+				{At: "t2", Text: "新しい完了"},
+			},
+			UpdatedAt: "2026-07-14T11:59:00+09:00",
+		}},
+	}
+	r := BuildRows(results, now, 10*time.Minute)[0]
+	if len(r.DoneItems) != 2 || r.DoneItems[0] != "新しい完了" || r.DoneItems[1] != "古い完了" {
+		t.Fatalf("done_log は新しい順であるべき: %+v", r.DoneItems)
+	}
+}
+
+func TestBuildDoneItems_MergeAndCap(t *testing.T) {
+	// done_log は末尾が最新。新しい順で返り、steps.done を後ろに合成、上限で丸め。
+	var log []state.DoneEntry
+	for i := range 7 {
+		log = append(log, state.DoneEntry{Text: fmt.Sprintf("L%d", i)}) // L0..L6, L6 が最新
+	}
+	items, overflow := buildDoneItems(log, []string{"S1"}, 5)
+	if len(items) != 5 {
+		t.Fatalf("上限 5 件に丸めるべき: %+v", items)
+	}
+	if items[0] != "L6" {
+		t.Fatalf("先頭は最新であるべき: %q", items[0])
+	}
+	// done_log 8件相当(7+steps1=8) → overflow 3
+	if overflow != 3 {
+		t.Fatalf("overflow=3 のはず: %d", overflow)
+	}
+}
+
+func TestBuildDoneItems_BackwardCompatStepsOnly(t *testing.T) {
+	items, overflow := buildDoneItems(nil, []string{"S1", "S2"}, 5)
+	if len(items) != 2 || items[0] != "S1" || overflow != 0 {
+		t.Fatalf("done_log 無しは steps.done を表示: %+v ov=%d", items, overflow)
 	}
 }
 

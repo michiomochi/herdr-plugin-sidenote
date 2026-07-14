@@ -17,6 +17,9 @@ import (
 // CurrentSchemaVersion は本実装が書き出すスキーマのバージョン。
 const CurrentSchemaVersion = 1
 
+// MaxDoneLog は done_log の保存上限（append 時に古い順で丸める）。
+const MaxDoneLog = 100
+
 // status（母艦視点の意味的ステータス）の取り得る値。
 const (
 	StatusPlanning = "planning"
@@ -44,16 +47,33 @@ var validStepStates = map[string]bool{
 
 // State は 1 つの space の状況（意味情報）。docs/design.md §6 のスキーマに対応する。
 type State struct {
-	SchemaVersion int       `json:"schema_version"`
-	Space         string    `json:"space"`
-	WorkspaceID   string    `json:"workspace_id,omitempty"`
-	Headline      string    `json:"headline"`
-	Status        string    `json:"status"`
-	Progress      *Progress `json:"progress,omitempty"`
-	Next          string    `json:"next,omitempty"`
-	Blockers      []string  `json:"blockers,omitempty"`
-	Notes         []string  `json:"notes,omitempty"`
-	UpdatedAt     string    `json:"updated_at"`
+	SchemaVersion int         `json:"schema_version"`
+	Space         string      `json:"space"`
+	WorkspaceID   string      `json:"workspace_id,omitempty"`
+	Headline      string      `json:"headline"`
+	Status        string      `json:"status"`
+	Progress      *Progress   `json:"progress,omitempty"`
+	Next          string      `json:"next,omitempty"`
+	Blockers      []string    `json:"blockers,omitempty"`
+	Notes         []string    `json:"notes,omitempty"`
+	DoneLog       []DoneEntry `json:"done_log,omitempty"`
+	UpdatedAt     string      `json:"updated_at"`
+}
+
+// DoneEntry は完了履歴（done_log）の 1 件。append 専用で積み上げる。
+type DoneEntry struct {
+	At   string `json:"at"`
+	Text string `json:"text"`
+}
+
+// AppendDoneEntry は done_log に 1 件追加し、保存上限 MaxDoneLog を超えたら
+// 古い順に切り捨てる。末尾が最新。
+func AppendDoneEntry(log []DoneEntry, text, now string) []DoneEntry {
+	log = append(log, DoneEntry{At: now, Text: text})
+	if len(log) > MaxDoneLog {
+		log = append([]DoneEntry(nil), log[len(log)-MaxDoneLog:]...)
+	}
+	return log
 }
 
 // Progress は進捗の内訳。すべて任意項目。
@@ -110,6 +130,11 @@ func Validate(s *State) error {
 	}
 	if _, err := time.Parse(time.RFC3339, s.UpdatedAt); err != nil {
 		return fmt.Errorf("updated_at が RFC3339 でない: %q", s.UpdatedAt)
+	}
+	for i, e := range s.DoneLog {
+		if strings.TrimSpace(e.Text) == "" {
+			return fmt.Errorf("done_log[%d].text は必須", i)
+		}
 	}
 	if s.Progress != nil {
 		if p := s.Progress.Percent; p != nil && (*p < 0 || *p > 100) {
