@@ -149,6 +149,46 @@ func TestBuildRows_SortNewestFirstBrokenLast(t *testing.T) {
 	}
 }
 
+func TestBuildRows_ClassifiesSteps(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "s", Headline: "h", Status: state.StatusWorking,
+			Progress: &state.Progress{Steps: []state.Step{
+				{Label: "A", State: state.StepDone},
+				{Label: "B", State: state.StepDoing},
+				{Label: "C", State: state.StepTodo},
+				{Label: "D", State: state.StepDone},
+			}},
+			UpdatedAt: "2026-07-14T11:59:00+09:00",
+		}},
+	}
+	r := BuildRows(results, now, 10*time.Minute)[0]
+	if len(r.Done) != 2 || r.Done[0] != "A" || r.Done[1] != "D" {
+		t.Fatalf("Done 分類が不正: %+v", r.Done)
+	}
+	if len(r.Doing) != 1 || r.Doing[0] != "B" {
+		t.Fatalf("Doing 分類が不正: %+v", r.Doing)
+	}
+	if len(r.Todo) != 1 || r.Todo[0] != "C" {
+		t.Fatalf("Todo 分類が不正: %+v", r.Todo)
+	}
+}
+
+func TestBuildRows_NoStepsEmptyClassification(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "s", Headline: "h", Status: state.StatusWorking,
+			UpdatedAt: "2026-07-14T11:59:00+09:00",
+		}},
+	}
+	r := BuildRows(results, now, 10*time.Minute)[0]
+	if len(r.Done) != 0 || len(r.Doing) != 0 || len(r.Todo) != 0 {
+		t.Fatalf("steps 無しは空分類のはず: %+v", r)
+	}
+}
+
 func TestBuildRows_Blockers(t *testing.T) {
 	now := mustTime(t, "2026-07-14T12:00:00+09:00")
 	results := []state.LoadResult{

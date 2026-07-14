@@ -221,84 +221,108 @@ func (m model) View() string {
 		return header + "\n\n" + dimStyle.Render("表示できる space がありません。母艦が sidenote set で状況を書き込むと表示されます。")
 	}
 
-	// 列幅: space(18) herdr(8) 母艦(9) age(7) 残りを headline/next に。
-	const wSpace, wHerdr, wStatus, wAge = 20, 8, 9, 7
-	wMain := max(width-wSpace-wHerdr-wStatus-wAge-4, 10)
+	lines := []string{header, ""}
 
-	colHead := row(
-		pad("SPACE", wSpace),
-		pad("HERDR", wHerdr),
-		pad("母艦", wStatus),
-		pad("状況 / 次アクション", wMain),
-		pad("更新", wAge),
-	)
-	lines := []string{header, "", dimStyle.Render(colHead)}
-
-	// 端末高さに収まるようデータ行数をクリップし、溢れた件数を末尾に示す。
-	// 行は更新の新しい順なので、末尾（古い側）を切り落とす。
-	dataRows := m.rows
-	overflow := 0
+	// 端末高さに収まるよう「ブロック単位」で詰め、溢れた space 数を末尾に示す。
+	// 行は更新の新しい順なので、末尾（古い側）の space から切り落とす。
+	avail := 0
 	if m.height > 0 {
-		headerLines := strings.Count(header, "\n") + 1
-		maxData := m.height - headerLines - 2 - 1 // 空行 + 列見出し + 溢れ表示の余白
-		maxData = max(maxData, 1)
-		if len(dataRows) > maxData {
-			overflow = len(dataRows) - maxData
-			dataRows = dataRows[:maxData]
+		avail = m.height - (strings.Count(header, "\n") + 1) - 1 // ヘッダ＋余白
+	}
+	shown := 0
+	used := 0
+	for _, r := range m.rows {
+		block := m.renderBlock(r, width)
+		// このブロックを入れると溢れる場合、最低 1 つ表示済みなら打ち切る
+		// （+1 は「…他 N 件」表示ぶんの余白）。
+		if m.height > 0 && shown > 0 && used+1+len(block)+1 > avail {
+			break
 		}
+		if shown > 0 {
+			lines = append(lines, "") // ブロック間の空行
+			used++
+		}
+		lines = append(lines, block...)
+		used += len(block)
+		shown++
 	}
-
-	for _, r := range dataRows {
-		lines = append(lines, m.renderRow(r, wSpace, wHerdr, wStatus, wMain, wAge))
-	}
-	if overflow > 0 {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", overflow)))
+	if shown < len(m.rows) {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", len(m.rows)-shown)))
 	}
 	return join(lines)
 }
 
-func (m model) renderRow(r view.Row, wSpace, wHerdr, wStatus, wMain, wAge int) string {
-	if r.Broken {
-		return brokenStyle.Render(row(
-			pad(r.Space, wSpace),
-			pad("-", wHerdr),
-			pad("壊れ", wStatus),
-			pad("state ファイルが壊れています", wMain),
-			pad("-", wAge),
-		))
+// renderBlock は 1 space を複数行ブロック（ヘッダ＋headline＋済/いま/予定/障害）
+// として描画する。空の区分行は省略し、headline は常に出す。
+// stale な space はブロック全体をグレーアウトする。
+func (m model) renderBlock(r view.Row, width int) []string {
+	trunc := func(s string) string { return runewidth.Truncate(s, width, "…") }
+	dim := func(s string) string {
+		if r.Stale {
+			return dimStyle.Render(s)
+		}
+		return s
 	}
 
-	main := r.Headline
-	if r.Next != "" {
-		main += "  → " + r.Next
-	}
-	if r.FutureSchema {
-		main = "[要更新] " + main
-	}
-	if len(r.Blockers) > 0 {
-		main = "⚠ " + main
+	if r.Broken {
+		return []string{brokenStyle.Render(trunc("▍ " + r.Space + "  — state ファイルが壊れています"))}
 	}
 
 	agent := r.AgentStatus
 	if agent == "" {
-		if !r.InHerdr {
-			agent = "-"
-		} else {
+		if r.InHerdr {
 			agent = "?"
+		} else {
+			agent = "-"
 		}
 	}
-
-	line := row(
-		pad(r.Space, wSpace),
-		pad(agent, wHerdr),
-		statusStyle(r.Status).Render(pad(orDash(r.Status), wStatus)),
-		pad(main, wMain),
-		pad(r.Age, wAge),
-	)
-	if r.Stale {
-		return dimStyle.Render(line)
+	name := r.Space
+	if r.FutureSchema {
+		name = "[要更新] " + name
 	}
-	return line
+	head := trunc(fmt.Sprintf("▍ %s   herdr:%s  母艦:%s   %s", name, agent, orDash(r.Status), r.Age))
+
+	var lines []string
+	if r.Stale {
+		lines = append(lines, dimStyle.Render(head))
+	} else {
+		lines = append(lines, statusStyle(r.Status).Bold(true).Render(head))
+	}
+
+	headline := r.Headline
+	if headline == "" {
+		headline = "-"
+	}
+	lines = append(lines, dim(trunc("    "+headline)))
+
+	if len(r.Done) > 0 {
+		lines = append(lines, dim(trunc("    ✓ 済   "+strings.Join(r.Done, " ・ "))))
+	}
+	if len(r.Doing) > 0 {
+		lines = append(lines, dim(trunc("    ▸ いま "+strings.Join(r.Doing, " ・ "))))
+	}
+	// 「予定」= 未着手ステップ（todo）＋ next（次の一手）
+	planned := strings.Join(r.Todo, " ・ ")
+	if r.Next != "" {
+		if planned != "" {
+			planned += " → " + r.Next
+		} else {
+			planned = r.Next
+		}
+	}
+	if planned != "" {
+		lines = append(lines, dim(trunc("    ○ 予定 "+planned)))
+	}
+	if len(r.Blockers) > 0 {
+		bl := trunc("    ⚠ 障害 " + strings.Join(r.Blockers, " ・ "))
+		if r.Stale {
+			bl = dimStyle.Render(bl)
+		} else {
+			bl = brokenStyle.Render(bl)
+		}
+		lines = append(lines, bl)
+	}
+	return lines
 }
 
 func orDash(s string) string {
@@ -306,16 +330,6 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
-}
-
-// pad は文字列を表示幅 w に切り詰め or 右パディングする（CJK 幅対応）。
-func pad(s string, w int) string {
-	s = runewidth.Truncate(s, w, "…")
-	return runewidth.FillRight(s, w)
-}
-
-func row(cols ...string) string {
-	return strings.Join(cols, " ")
 }
 
 func join(lines []string) string {

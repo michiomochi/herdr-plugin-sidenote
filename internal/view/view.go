@@ -57,6 +57,9 @@ type Row struct {
 	Headline     string
 	Next         string
 	Blockers     []string
+	Done         []string // steps.state==done の label（過去・完了）
+	Doing        []string // steps.state==doing の label（現在）
+	Todo         []string // steps.state==todo の label（今後の予定）
 	Age          string
 	updated      time.Time
 	hasTime      bool
@@ -81,6 +84,7 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 			continue
 		}
 		s := r.State
+		done, doing, todo := classifySteps(s.Progress)
 		row := Row{
 			Key:          s.Key(),
 			Space:        s.Space,
@@ -89,6 +93,9 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 			Headline:     s.Headline,
 			Next:         s.Next,
 			Blockers:     s.Blockers,
+			Done:         done,
+			Doing:        doing,
+			Todo:         todo,
 			FutureSchema: s.IsFutureSchema(),
 		}
 		if tm, err := s.UpdatedTime(); err == nil {
@@ -126,6 +133,25 @@ func sortRows(rows []Row) {
 func baseName(p string) string {
 	b := filepath.Base(p)
 	return strings.TrimSuffix(b, ".json")
+}
+
+// classifySteps は progress.steps を done/doing/todo の 3 群（label 配列）に
+// 分類する。過去（Done）・現在（Doing）・未来（Todo）の複数行表示に使う。
+func classifySteps(p *state.Progress) (done, doing, todo []string) {
+	if p == nil {
+		return nil, nil, nil
+	}
+	for _, s := range p.Steps {
+		switch s.State {
+		case state.StepDone:
+			done = append(done, s.Label)
+		case state.StepDoing:
+			doing = append(doing, s.Label)
+		case state.StepTodo:
+			todo = append(todo, s.Label)
+		}
+	}
+	return done, doing, todo
 }
 
 // Merge は state 由来の行に herdr の骨格情報（agent_status）を突合して付与し、
