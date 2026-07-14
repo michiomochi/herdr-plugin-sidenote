@@ -204,6 +204,93 @@ func TestBuildRows_Blockers(t *testing.T) {
 	}
 }
 
+func TestGroupOf(t *testing.T) {
+	cases := []struct {
+		name string
+		r    Row
+		want GroupKind
+	}{
+		{"blocked→要対応", Row{Status: state.StatusBlocked}, GroupAttention},
+		{"review→要対応", Row{Status: state.StatusReview}, GroupAttention},
+		{"working→実施中", Row{Status: state.StatusWorking}, GroupActive},
+		{"planning→実施中", Row{Status: state.StatusPlanning}, GroupActive},
+		{"done→完了待機", Row{Status: state.StatusDone}, GroupWaiting},
+		{"blockers非空のworkingは昇格", Row{Status: state.StatusWorking, Blockers: []string{"x"}}, GroupAttention},
+		{"broken→完了待機", Row{Broken: true}, GroupWaiting},
+		{"skeleton(status空)→完了待機", Row{Status: "", skeleton: true}, GroupWaiting},
+	}
+	for _, c := range cases {
+		if got := groupOf(c.r); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestGroupRows_OrderAndTitles(t *testing.T) {
+	rows := []Row{
+		{Space: "a", Status: state.StatusWorking},
+		{Space: "b", Status: state.StatusReview},
+		{Space: "c", Status: state.StatusDone},
+	}
+	groups := GroupRows(rows)
+	if len(groups) != 3 {
+		t.Fatalf("3 グループのはず: %d", len(groups))
+	}
+	if groups[0].Kind != GroupAttention || groups[1].Kind != GroupActive || groups[2].Kind != GroupWaiting {
+		t.Fatalf("グループ順が不正: %+v", groups)
+	}
+	if groups[0].Title == "" || groups[1].Title == "" || groups[2].Title == "" {
+		t.Fatalf("Title が空: %+v", groups)
+	}
+}
+
+func TestGroupRows_SkipsEmptyGroups(t *testing.T) {
+	// 要母艦対応が空
+	rows := []Row{
+		{Space: "a", Status: state.StatusWorking},
+		{Space: "c", Status: state.StatusDone},
+	}
+	groups := GroupRows(rows)
+	if len(groups) != 2 {
+		t.Fatalf("空グループ省略で 2 つのはず: %d (%+v)", len(groups), groups)
+	}
+	if groups[0].Kind != GroupActive {
+		t.Fatalf("先頭は実施中のはず: %+v", groups[0])
+	}
+}
+
+func TestGroupRows_PreservesOrderWithinGroup(t *testing.T) {
+	rows := []Row{
+		{Space: "first", Status: state.StatusWorking},
+		{Space: "second", Status: state.StatusPlanning},
+	}
+	groups := GroupRows(rows)
+	if len(groups[0].Rows) != 2 || groups[0].Rows[0].Space != "first" || groups[0].Rows[1].Space != "second" {
+		t.Fatalf("グループ内順序が保持されていない: %+v", groups[0].Rows)
+	}
+}
+
+func TestGroupRows_BrokenGoesToWaitingLast(t *testing.T) {
+	rows := []Row{
+		{Space: "ok", Status: state.StatusDone},
+		{Space: "broken", Broken: true}, // 入力上すでに末尾（sortRows 済み想定）
+	}
+	groups := GroupRows(rows)
+	if len(groups) != 1 || groups[0].Kind != GroupWaiting {
+		t.Fatalf("完了待機 1 グループのはず: %+v", groups)
+	}
+	last := groups[0].Rows[len(groups[0].Rows)-1]
+	if !last.Broken {
+		t.Fatal("broken が完了待機の末尾でない")
+	}
+}
+
+func TestGroupRows_Empty(t *testing.T) {
+	if g := GroupRows(nil); len(g) != 0 {
+		t.Fatalf("空入力は空グループ: %+v", g)
+	}
+}
+
 func TestRefreshAges(t *testing.T) {
 	now := mustTime(t, "2026-07-14T12:00:00+09:00")
 	results := []state.LoadResult{

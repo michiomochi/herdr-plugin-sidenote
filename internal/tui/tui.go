@@ -227,35 +227,100 @@ func (m model) View() string {
 		return header + "\n\n" + dimStyle.Render("表示できる space がありません。母艦が sidenote set で状況を書き込むと表示されます。")
 	}
 
+	groups := view.GroupRows(m.rows)
 	lines := []string{header, ""}
 
-	// 端末高さに収まるよう「ブロック単位」で詰め、溢れた space 数を末尾に示す。
-	// 行は更新の新しい順なので、末尾（古い側）の space から切り落とす。
+	// 端末高さに収まるよう、要母艦対応グループから順に「ブロック単位」で詰める。
+	// 見出しも 1 行として数え、入り切らなくなったら打ち切り末尾に「…他 N 件」。
 	avail := 0
 	if m.height > 0 {
 		avail = m.height - (strings.Count(header, "\n") + 1) - 1 // ヘッダ＋余白
 	}
+	total := len(m.rows)
 	shown := 0
 	used := 0
-	for _, r := range m.rows {
-		block := m.renderBlock(r, width)
-		// このブロックを入れると溢れる場合、最低 1 つ表示済みなら打ち切る
-		// （+1 は「…他 N 件」表示ぶんの余白）。
-		if m.height > 0 && shown > 0 && used+1+len(block)+1 > avail {
-			break
+	clipped := false
+
+	limited := m.height > 0
+	overflow := func(n int) bool {
+		// shown>0 のとき、n 行＋「…他 N 件」ぶんを入れると溢れるか
+		return limited && shown > 0 && used+n+1 > avail
+	}
+
+groupLoop:
+	for gi, g := range groups {
+		headLine := groupHeaderStyle(g.Kind).Render(
+			fmt.Sprintf("%s %s (%d)", groupSymbol(g.Kind), g.Title, len(g.Rows)))
+
+		// 見出しは「見出し＋最低 1 ブロック」が入るときだけ出す（見出しの空振り防止）。
+		firstBlock := m.renderBlock(g.Rows[0], width)
+		need := len(firstBlock) + 1 // 見出し
+		if gi > 0 {
+			need++ // グループ間の空行
 		}
-		if shown > 0 {
-			lines = append(lines, "") // ブロック間の空行
+		if overflow(need) {
+			clipped = true
+			break groupLoop
+		}
+		if gi > 0 {
+			lines = append(lines, "")
 			used++
 		}
-		lines = append(lines, block...)
-		used += len(block)
-		shown++
+		lines = append(lines, headLine)
+		used++
+
+		for bi, r := range g.Rows {
+			block := firstBlock
+			if bi > 0 {
+				block = m.renderBlock(r, width)
+			}
+			sep := 0
+			if bi > 0 {
+				sep = 1 // グループ内ブロック間の空行
+			}
+			if overflow(sep + len(block)) {
+				clipped = true
+				break groupLoop
+			}
+			if bi > 0 {
+				lines = append(lines, "")
+				used++
+			}
+			lines = append(lines, block...)
+			used += len(block)
+			shown++
+		}
 	}
-	if shown < len(m.rows) {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", len(m.rows)-shown)))
+
+	if clipped || shown < total {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("…他 %d 件", total-shown)))
 	}
 	return join(lines)
+}
+
+// groupSymbol はセクション見出しの記号を返す。
+func groupSymbol(k view.GroupKind) string {
+	switch k {
+	case view.GroupAttention:
+		return "●"
+	case view.GroupActive:
+		return "▸"
+	default:
+		return "✓"
+	}
+}
+
+// groupHeaderStyle はセクション見出しの色。要対応は目を引く色、実施中は通常、
+// 完了・待機は弱め（dim 2階調と整合）。
+func groupHeaderStyle(k view.GroupKind) lipgloss.Style {
+	switch k {
+	case view.GroupAttention:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true) // 赤系で注意喚起
+	case view.GroupActive:
+		return lipgloss.NewStyle().Bold(true)
+	default:
+		return staleHeadStyle // 完了・待機は弱いグレー
+	}
 }
 
 // renderBlock は 1 space を複数行ブロック（ヘッダ＋headline＋済/いま/予定/障害）

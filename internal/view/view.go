@@ -135,6 +135,70 @@ func baseName(p string) string {
 	return strings.TrimSuffix(b, ".json")
 }
 
+// GroupKind は space をセクション分けするグループ種別。
+type GroupKind int
+
+const (
+	// GroupAttention は母艦（人間）の対応が必要な space（blocked/review/ブロッカーあり）。
+	GroupAttention GroupKind = iota
+	// GroupActive は各 space で実施中（working/planning）。
+	GroupActive
+	// GroupWaiting は完了・待機（done / skeleton / broken）。
+	GroupWaiting
+)
+
+// Group はセクション（見出し＋所属行）。Title はプレーンな見出し語で、
+// 記号・件数・色付けは描画側（tui）の責務とする。
+type Group struct {
+	Kind  GroupKind
+	Title string
+	Rows  []Row
+}
+
+var groupTitles = map[GroupKind]string{
+	GroupAttention: "要母艦対応",
+	GroupActive:    "実施中",
+	GroupWaiting:   "完了・待機",
+}
+
+// groupOf は行の所属グループを母艦 status ベースで判定する（上から評価）。
+// herdr の agent_status は分類に使わない（ヘッダ併記のみ）。
+func groupOf(r Row) GroupKind {
+	switch {
+	case r.Broken:
+		return GroupWaiting
+	case len(r.Blockers) > 0:
+		return GroupAttention // status=working でも取りこぼし防止で昇格
+	case r.Status == state.StatusBlocked || r.Status == state.StatusReview:
+		return GroupAttention
+	case r.Status == state.StatusWorking || r.Status == state.StatusPlanning:
+		return GroupActive
+	default:
+		// done / skeleton(status=="") など
+		return GroupWaiting
+	}
+}
+
+// GroupRows はソート済みの rows を固定グループ順
+// （要母艦対応 → 実施中 → 完了・待機）に安定分配する。
+// 空グループは省略し、グループ内の順序は入力順（＝既存ソート）を保つ。
+func GroupRows(rows []Row) []Group {
+	buckets := map[GroupKind][]Row{}
+	for _, r := range rows {
+		k := groupOf(r)
+		buckets[k] = append(buckets[k], r)
+	}
+	order := []GroupKind{GroupAttention, GroupActive, GroupWaiting}
+	out := make([]Group, 0, len(order))
+	for _, k := range order {
+		if len(buckets[k]) == 0 {
+			continue // 空グループは見出しごと省略
+		}
+		out = append(out, Group{Kind: k, Title: groupTitles[k], Rows: buckets[k]})
+	}
+	return out
+}
+
 // classifySteps は progress.steps を done/doing/todo の 3 群（label 配列）に
 // 分類する。過去（Done）・現在（Doing）・未来（Todo）の複数行表示に使う。
 func classifySteps(p *state.Progress) (done, doing, todo []string) {
