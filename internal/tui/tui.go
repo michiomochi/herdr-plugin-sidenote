@@ -181,6 +181,12 @@ var (
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	brokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	hintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	// stale ブロック用。ブロック全体を一律に濃くグレーアウトすると本文が
+	// 読めなくなるため、ヘッダ（鮮度の手掛かり）はやや弱いグレー、本文は
+	// 読める明るいグレーに留める（faint 属性は使わない）。
+	staleHeadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	staleBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 )
 
 func statusStyle(status string) lipgloss.Style {
@@ -257,9 +263,10 @@ func (m model) View() string {
 // stale な space はブロック全体をグレーアウトする。
 func (m model) renderBlock(r view.Row, width int) []string {
 	trunc := func(s string) string { return runewidth.Truncate(s, width, "…") }
-	dim := func(s string) string {
+	// stale の本文は「読める明るいグレー」に留める（濃い dim にしない）。
+	body := func(s string) string {
 		if r.Stale {
-			return dimStyle.Render(s)
+			return staleBodyStyle.Render(s)
 		}
 		return s
 	}
@@ -284,7 +291,8 @@ func (m model) renderBlock(r view.Row, width int) []string {
 
 	var lines []string
 	if r.Stale {
-		lines = append(lines, dimStyle.Render(head))
+		// ヘッダはやや弱いグレーにして「古い」手掛かりを残す。
+		lines = append(lines, staleHeadStyle.Render(head))
 	} else {
 		lines = append(lines, statusStyle(r.Status).Bold(true).Render(head))
 	}
@@ -293,13 +301,13 @@ func (m model) renderBlock(r view.Row, width int) []string {
 	if headline == "" {
 		headline = "-"
 	}
-	lines = append(lines, dim(trunc("    "+headline)))
+	lines = append(lines, body(trunc("    "+headline)))
 
 	if len(r.Done) > 0 {
-		lines = append(lines, dim(trunc("    ✓ 済   "+strings.Join(r.Done, " ・ "))))
+		lines = append(lines, body(trunc("    ✓ 済   "+strings.Join(r.Done, " ・ "))))
 	}
 	if len(r.Doing) > 0 {
-		lines = append(lines, dim(trunc("    ▸ いま "+strings.Join(r.Doing, " ・ "))))
+		lines = append(lines, body(trunc("    ▸ いま "+strings.Join(r.Doing, " ・ "))))
 	}
 	// 「予定」= 未着手ステップ（todo）＋ next（次の一手）
 	planned := strings.Join(r.Todo, " ・ ")
@@ -311,12 +319,12 @@ func (m model) renderBlock(r view.Row, width int) []string {
 		}
 	}
 	if planned != "" {
-		lines = append(lines, dim(trunc("    ○ 予定 "+planned)))
+		lines = append(lines, body(trunc("    ○ 予定 "+planned)))
 	}
 	if len(r.Blockers) > 0 {
 		bl := trunc("    ⚠ 障害 " + strings.Join(r.Blockers, " ・ "))
 		if r.Stale {
-			bl = dimStyle.Render(bl)
+			bl = staleBodyStyle.Render(bl) // 古くても本文は読める明るさに
 		} else {
 			bl = brokenStyle.Render(bl)
 		}
