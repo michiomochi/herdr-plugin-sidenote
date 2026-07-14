@@ -182,32 +182,23 @@ var (
 	brokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	hintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	// stale ブロック用。ブロック全体を一律に濃くグレーアウトすると本文が
-	// 読めなくなるため、ヘッダ（鮮度の手掛かり）はやや弱いグレー、本文は
-	// しっかり読める明るいグレーに留める（faint 属性は使わない）。
-	// 表示レビューで「まだ暗い」との指摘を受け、さらに明るく調整（244→247 / 250→253）。
-	staleHeadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
-	staleBodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("253"))
-
-	// TODO 項目の状態別色（fresh 時のみ適用。stale 時は staleBodyStyle に統一）。
+	// TODO 項目の状態別色（stale の有無に関係なく常に適用。鮮度は Age 表記で表す）。
 	doneItemStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))             // 完了=緑
 	doingItemStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))  // 進行中=太字白
 	todoItemStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // 予定=グレー
 	awaitLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")) // 母艦対応待ち=赤
 )
 
-func statusStyle(status string) lipgloss.Style {
-	switch status {
-	case state.StatusWorking:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")) // green
-	case state.StatusBlocked:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")) // red
-	case state.StatusReview:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // orange
-	case state.StatusDone:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // blue
-	case state.StatusPlanning:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")) // gray
+// itemStyleFor は TODO 項目の状態（done/doing/todo）だけで色を決める。
+// stale の有無には依存しない（stale でも色を落とさない、が確定仕様）。
+func itemStyleFor(itemState string) lipgloss.Style {
+	switch itemState {
+	case state.StepDone:
+		return doneItemStyle
+	case state.StepDoing:
+		return doingItemStyle
+	case state.StepTodo:
+		return todoItemStyle
 	default:
 		return lipgloss.NewStyle()
 	}
@@ -264,25 +255,18 @@ func (m model) View() string {
 	return join(lines)
 }
 
-// renderBlock は 1 space を複数行ブロック（ヘッダ＋headline＋済/いま/予定/障害）
-// として描画する。空の区分行は省略し、headline は常に出す。
-// stale な space はブロック全体をグレーアウトする。
+// renderBlock は 1 space を複数行ブロック（ヘッダ＋済/いま/予定/障害）として描画する。
+// 見出しは status・stale に関係なく常に白（headerStyle）。TODO 項目は stale の有無に
+// 関係なく常に状態別色（鮮度は Age 表記で表す）。await は赤ラベルを右に付す。
 func (m model) renderBlock(r view.Row, width int) []string {
 	trunc := func(s string) string { return runewidth.Truncate(s, width, "…") }
-	// TODO 項目を 1 行描画する。fresh 時は状態別色、stale 時は弱グレー統一。
-	// await（母艦対応待ち）は行動シグナルなので、stale でも赤ラベルを右に残す。
 	awaitLabel := "〈母艦対応待ち〉"
 	renderItem := func(marker, text string, itemStyle lipgloss.Style, await bool) string {
 		w := width
 		if await {
 			w = max(width-runewidth.StringWidth(awaitLabel)-1, 4)
 		}
-		content := runewidth.Truncate("    "+marker+" "+text, w, "…")
-		if r.Stale {
-			content = staleBodyStyle.Render(content)
-		} else {
-			content = itemStyle.Render(content)
-		}
+		content := itemStyle.Render(runewidth.Truncate("    "+marker+" "+text, w, "…"))
 		if await {
 			content += " " + awaitLabelStyle.Render(awaitLabel)
 		}
@@ -307,30 +291,24 @@ func (m model) renderBlock(r view.Row, width int) []string {
 	}
 	head := trunc(fmt.Sprintf("▍ %s   herdr:%s  母艦:%s   %s", name, agent, orDash(r.Status), r.Age))
 
-	var lines []string
-	if r.Stale {
-		// ヘッダはやや弱いグレーにして「古い」手掛かりを残す。
-		lines = append(lines, staleHeadStyle.Render(head))
-	} else {
-		lines = append(lines, statusStyle(r.Status).Bold(true).Render(head))
-	}
+	// 見出しは常に白・太字（status 色分け・stale グレーは廃止）。
+	lines := []string{headerStyle.Render(head)}
 
-	// headline 行は廃止（やることは TODO リストに集約）。
 	// 1 列 TODO: 済み(✓緑)→いま(→太字白)→予定(□グレー) の順、1 項目 1 行。
 	for _, t := range r.DoneItems {
-		lines = append(lines, renderItem("✓", t, doneItemStyle, false))
+		lines = append(lines, renderItem("✓", t, itemStyleFor(state.StepDone), false))
 	}
 	if r.DoneOverflow > 0 {
-		lines = append(lines, renderItem("✓", fmt.Sprintf("…他 %d 件", r.DoneOverflow), doneItemStyle, false))
+		lines = append(lines, renderItem("✓", fmt.Sprintf("…他 %d 件", r.DoneOverflow), itemStyleFor(state.StepDone), false))
 	}
 	for _, it := range r.Doing {
-		lines = append(lines, renderItem("→", it.Text, doingItemStyle, it.Await))
+		lines = append(lines, renderItem("→", it.Text, itemStyleFor(state.StepDoing), it.Await))
 	}
 	for _, it := range r.Todo {
-		lines = append(lines, renderItem("□", it.Text, todoItemStyle, it.Await))
+		lines = append(lines, renderItem("□", it.Text, itemStyleFor(state.StepTodo), it.Await))
 	}
 	if r.Next != "" {
-		lines = append(lines, renderItem("□", r.Next, todoItemStyle, false))
+		lines = append(lines, renderItem("□", r.Next, itemStyleFor(state.StepTodo), false))
 	}
 	if len(r.Blockers) > 0 {
 		lines = append(lines, renderItem("⚠", "障害 "+strings.Join(r.Blockers, " ・ "), brokenStyle, false))

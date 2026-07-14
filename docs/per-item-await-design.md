@@ -161,3 +161,15 @@ sidenote — 6 spaces   q:quit  r:reload
 
 実装は §5 のとおり state（`Step.Await`）/cli（`ParseStep` 拡張）/view（Item 化・
 `spaceRank` ソート・グルーピング撤去）/tui（状態別色・赤ラベル・headline削除・見出し撤去）で完了。
+
+## 7. 追記（2026-07-15・確定変更）: stale でも状態別色
+
+`staleThreshold=10分` では通常運用で全 space が stale 化し、状態別色（特に完了✓の緑）が
+常に消えて見える問題があったため、§1・§5 の「stale 時に色を落とす」規定を以下に上書きした:
+
+- **見出し行**は status・stale に関係なく**常に白**（`headerStyle`）。`statusStyle` 色分けと
+  `staleHeadStyle` グレーアウトを廃止。
+- **TODO 項目**は stale に関係なく**常に状態別色**（`renderItem` の stale 分岐を撤去、
+  `staleBodyStyle` は不使用＝削除）。
+- **await 赤ラベル**・**broken 赤(196)** は維持。
+- **鮮度は Age 表記のみ**で表す（`staleThreshold` は Age/Stale 算出に残すが色には使わない）。
