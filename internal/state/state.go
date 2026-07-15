@@ -57,6 +57,7 @@ type State struct {
 	Blockers      []string    `json:"blockers,omitempty"`
 	Notes         []string    `json:"notes,omitempty"`
 	DoneLog       []DoneEntry `json:"done_log,omitempty"`
+	Epic          string      `json:"epic,omitempty"` // エピック等の参照 URL（あれば見出しをリンク化）
 	UpdatedAt     string      `json:"updated_at"`
 }
 

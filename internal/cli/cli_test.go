@@ -208,6 +208,37 @@ func TestSet_WritesValidFile(t *testing.T) {
 	}
 }
 
+func TestSet_Epic(t *testing.T) {
+	dir := t.TempDir()
+	if err := Set(dir, Options{
+		Space: strp("s"), WorkspaceID: strp("w1"), Headline: strp("h"),
+		Status: strp(state.StatusWorking), Epic: strp("https://e.com/1"),
+	}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := state.Load(filepath.Join(dir, "w1.json"))
+	if loaded.Epic != "https://e.com/1" {
+		t.Fatalf("epic 未格納: %q", loaded.Epic)
+	}
+}
+
+func TestUpdate_PreservesEpic(t *testing.T) {
+	dir := t.TempDir()
+	if err := Set(dir, Options{
+		Space: strp("s"), WorkspaceID: strp("w1"), Headline: strp("h"),
+		Status: strp(state.StatusWorking), Epic: strp("https://e.com/1"),
+	}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(dir, "w1", Options{Status: strp(state.StatusDone)}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := state.Load(filepath.Join(dir, "w1.json"))
+	if loaded.Epic != "https://e.com/1" {
+		t.Fatalf("update が epic を消した: %q", loaded.Epic)
+	}
+}
+
 func TestSet_MissingRequiredFails(t *testing.T) {
 	dir := t.TempDir()
 	o := Options{Space: strp("s")} // headline / status 欠如

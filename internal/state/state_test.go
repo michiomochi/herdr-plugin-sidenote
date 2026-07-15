@@ -153,6 +153,38 @@ func TestFileName(t *testing.T) {
 	}
 }
 
+func TestState_EpicRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := validState()
+	s.Epic = "https://example.com/epic/1"
+	if err := Save(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(filepath.Join(dir, FileName(s)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Epic != "https://example.com/epic/1" {
+		t.Fatalf("epic が往復で失われた: %q", got.Epic)
+	}
+}
+
+func TestLoad_NoEpicBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	j := `{"schema_version":1,"space":"x","headline":"h","status":"working","updated_at":"2026-07-14T10:00:00+09:00"}`
+	p := filepath.Join(dir, "a.json")
+	if err := os.WriteFile(p, []byte(j), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Epic != "" {
+		t.Fatalf("epic 無しは空のはず: %q", got.Epic)
+	}
+}
+
 func TestStep_AwaitRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	s := validState()

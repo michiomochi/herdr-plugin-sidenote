@@ -28,6 +28,7 @@ type Options struct {
 	Steps       *[]state.Step
 	Blockers    *[]string
 	Notes       *[]string
+	Epic        *string
 }
 
 // ParseStep は "label:state" または "label:state:await" 形式を state.Step に
@@ -97,6 +98,9 @@ func applyOptions(s *state.State, o Options) {
 	}
 	if o.Next != nil {
 		s.Next = *o.Next
+	}
+	if o.Epic != nil {
+		s.Epic = *o.Epic
 	}
 	if o.Blockers != nil {
 		s.Blockers = append([]string(nil), (*o.Blockers)...)

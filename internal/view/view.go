@@ -52,6 +52,7 @@ type Row struct {
 	Key          string // 突合キー（workspace_id か space）
 	Space        string
 	WorkspaceID  string
+	Epic         string // エピック等の参照 URL（あれば見出しをリンク化）
 	Status       string // 母艦視点の意味的ステータス
 	AgentStatus  string // herdr 検出の稼働状態（骨格・M4 で付与）
 	Headline     string
@@ -113,6 +114,7 @@ func BuildRows(results []state.LoadResult, now time.Time, staleThreshold time.Du
 			Key:          s.Key(),
 			Space:        s.Space,
 			WorkspaceID:  s.WorkspaceID,
+			Epic:         s.Epic,
 			Status:       s.Status,
 			Headline:     s.Headline,
 			Next:         s.Next,

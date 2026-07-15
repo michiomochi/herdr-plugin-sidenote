@@ -177,6 +177,20 @@ func TestBuildRows_ClassifiesSteps(t *testing.T) {
 	}
 }
 
+func TestBuildRows_Epic(t *testing.T) {
+	now := mustTime(t, "2026-07-14T12:00:00+09:00")
+	results := []state.LoadResult{
+		{Path: "/x/w1.json", State: &state.State{
+			SchemaVersion: 1, Space: "s", Headline: "h", Status: state.StatusWorking,
+			Epic: "https://e.com/1", UpdatedAt: "2026-07-14T11:59:00+09:00",
+		}},
+	}
+	r := BuildRows(results, now, 10*time.Minute)[0]
+	if r.Epic != "https://e.com/1" {
+		t.Fatalf("epic が Row に反映されていない: %q", r.Epic)
+	}
+}
+
 func TestBuildRows_StepAwait(t *testing.T) {
 	now := mustTime(t, "2026-07-14T12:00:00+09:00")
 	results := []state.LoadResult{

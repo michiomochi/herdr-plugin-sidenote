@@ -70,8 +70,9 @@ func usage() {
 set/update のフィールドオプション:
   --space S --workspace-id W --headline H --status ST(planning/working/blocked/review/done)
   --next N --summary SUM --percent P(0-100)
-  --step "label:state"(繰り返し可, state=todo/doing/done)
+  --step "label:state[:await]"(繰り返し可, state=todo/doing/done, :awaitで母艦対応待ち)
   --blocker B(繰り返し可) --note N(繰り返し可)
+  --epic URL(見出しをエピックへのリンクにする)
 
 key は workspace-id（無ければ space）を指定する。
 `)
@@ -95,6 +96,7 @@ type fieldFlags struct {
 	steps       stringSlice
 	blockers    stringSlice
 	notes       stringSlice
+	epic        string
 }
 
 func registerFieldFlags(fs *flag.FlagSet) *fieldFlags {
@@ -109,6 +111,7 @@ func registerFieldFlags(fs *flag.FlagSet) *fieldFlags {
 	fs.Var(&f.steps, "step", `"label:state" 形式（繰り返し可）`)
 	fs.Var(&f.blockers, "blocker", "ブロッカー（繰り返し可）")
 	fs.Var(&f.notes, "note", "補足メモ（繰り返し可）")
+	fs.StringVar(&f.epic, "epic", "", "エピック等の参照 URL（見出しをリンク化）")
 	return f
 }
 
@@ -132,6 +135,9 @@ func (f *fieldFlags) toOptions(fs *flag.FlagSet) (cli.Options, error) {
 	}
 	if present["next"] {
 		o.Next = &f.next
+	}
+	if present["epic"] {
+		o.Epic = &f.epic
 	}
 	if present["summary"] {
 		o.Summary = &f.summary
