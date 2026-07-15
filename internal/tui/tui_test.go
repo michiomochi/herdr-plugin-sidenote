@@ -11,30 +11,23 @@ import (
 
 const longEpicURL = "https://example.com/very/long/epic/url/that/exceeds/width"
 
-func TestRenderBlock_EpicRawURL(t *testing.T) {
+func TestRenderBlock_EpicURLInHeader(t *testing.T) {
 	m := model{}
-	r := view.Row{Space: "s", Status: state.StatusWorking, Epic: longEpicURL, Age: "1s前"}
-	// width を URL より小さくしても URL は trunc されない
-	lines := m.renderBlock(r, 20)
+	r := view.Row{Space: "myspace", Status: state.StatusWorking, Epic: longEpicURL, Age: "1s前"}
+	lines := m.renderBlock(r, 200)
 
-	var urlLine string
+	// ヘッダ行（lines[0]）に URL が完全に含まれ、タイトル直後（"myspace "＋URL）
+	if !strings.Contains(lines[0], longEpicURL) {
+		t.Fatalf("ヘッダに完全 URL が無い: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "myspace "+longEpicURL) {
+		t.Fatalf("タイトル直後に URL が来ていない: %q", lines[0])
+	}
+	// 🔗 サブ行・↗・OSC8 は残っていないこと
 	for _, l := range lines {
 		if strings.Contains(l, "🔗") {
-			urlLine = l
+			t.Fatalf("🔗 サブ行が残っている: %q", l)
 		}
-	}
-	if urlLine == "" {
-		t.Fatalf("生URLサブ行(🔗)が無い: %#v", lines)
-	}
-	if !strings.Contains(urlLine, longEpicURL) {
-		t.Fatalf("URL が trunc され不完全: %q", urlLine)
-	}
-	// ヘッダ直下（lines[1]）に URL 行があること
-	if !strings.Contains(lines[1], "🔗") {
-		t.Fatalf("URL 行がヘッダ直下でない: %#v", lines)
-	}
-	// タイトルに ↗ / OSC8 が残っていないこと
-	for _, l := range lines {
 		if strings.Contains(l, "↗") {
 			t.Fatalf("↗ が残っている: %q", l)
 		}
@@ -44,13 +37,30 @@ func TestRenderBlock_EpicRawURL(t *testing.T) {
 	}
 }
 
-func TestRenderBlock_NoEpicNoURLLine(t *testing.T) {
+func TestRenderBlock_EpicURLPreservedWhenNarrow(t *testing.T) {
+	m := model{}
+	r := view.Row{Space: "s", Status: state.StatusWorking, Epic: longEpicURL, Age: "1s前"}
+	// URL(約55) より狭い幅でも URL は trunc されない（status 側を犠牲に URL 保全）
+	lines := m.renderBlock(r, 30)
+	if !strings.Contains(lines[0], longEpicURL) {
+		t.Fatalf("狭幅で URL が trunc された: %q", lines[0])
+	}
+	// URL に … が入っていないこと
+	if strings.Contains(lines[0], longEpicURL[:20]+"…") {
+		t.Fatalf("URL に … が入っている: %q", lines[0])
+	}
+}
+
+func TestRenderBlock_NoEpicNoURL(t *testing.T) {
 	m := model{}
 	r := view.Row{Space: "s", Status: state.StatusWorking, Age: "1s前"}
 	lines := m.renderBlock(r, 80)
+	if strings.Contains(lines[0], "http") {
+		t.Fatalf("epic 無しでヘッダに URL が出た: %q", lines[0])
+	}
 	for _, l := range lines {
 		if strings.Contains(l, "🔗") {
-			t.Fatalf("epic 無しで URL 行が出た: %q", l)
+			t.Fatalf("🔗 が残っている: %q", l)
 		}
 	}
 }

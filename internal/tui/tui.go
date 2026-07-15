@@ -289,21 +289,32 @@ func (m model) renderBlock(r view.Row, width int) []string {
 	if r.FutureSchema {
 		name = "[要更新] " + name
 	}
-	// 見出し: 「▍ <space名>   herdr:x  母艦:y  age」。見出しは常に白・太字。
+	// 見出し: 「▍ <space名> [<epic URL>]   herdr:x  母艦:y  age」。見出しは常に白・太字。
+	// epic があれば title 直後に生URL を置く（Ghostty の自動URL検出に頼るため
+	// URL は絶対に truncate しない）。幅が足りない場合は URL より後ろの status 側
+	// （herdr/母艦/age）を切り詰めて URL を保全する。
 	prefix := "▍ "
-	suffix := fmt.Sprintf("   herdr:%s  母艦:%s   %s", agent, orDash(r.Status), r.Age)
-	budget := max(width-runewidth.StringWidth(prefix)-runewidth.StringWidth(suffix), 4)
-	nameTrunc := runewidth.Truncate(name, budget, "…")
-	head := prefix + nameTrunc + suffix
+	statusSuffix := fmt.Sprintf("   herdr:%s  母艦:%s   %s", agent, orDash(r.Status), r.Age)
+	titleBudget := max(width-runewidth.StringWidth(prefix)-runewidth.StringWidth(statusSuffix), 4)
+	nameTrunc := runewidth.Truncate(name, titleBudget, "…")
+
+	var head string
+	if r.Epic != "" {
+		base := prefix + nameTrunc + " " + r.Epic // URL は完全（trunc しない）
+		remaining := width - runewidth.StringWidth(base)
+		switch {
+		case remaining >= runewidth.StringWidth(statusSuffix):
+			head = base + statusSuffix
+		case remaining > 0:
+			head = base + runewidth.Truncate(statusSuffix, remaining, "") // … なしで status を切る
+		default:
+			head = base // URL 保全優先で status を省略
+		}
+	} else {
+		head = prefix + nameTrunc + statusSuffix
+	}
 
 	lines := []string{headerStyle.Render(head)}
-
-	// エピック URL はヘッダ直下に生URLの dim サブ行で出す（epic 非空時のみ）。
-	// herdr が OSC8 を消費し Ghostty で開けないため、Ghostty の自動URL検出に頼る。
-	// 完全URLが1行に途切れず必要なので、この行だけは truncate しない。
-	if r.Epic != "" {
-		lines = append(lines, dimStyle.Render("    🔗 "+r.Epic))
-	}
 
 	// 1 列 TODO: 済み(✓緑)→いま(→太字白)→予定(□グレー) の順、1 項目 1 行。
 	for _, t := range r.DoneItems {
