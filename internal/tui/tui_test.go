@@ -6,34 +6,52 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/michiomochi/herdr-plugin-sidenote/internal/state"
+	"github.com/michiomochi/herdr-plugin-sidenote/internal/view"
 )
 
-func TestRenderHeadName_WithEpic(t *testing.T) {
-	out := renderHeadName("myspace", "https://e.com/1")
-	if !strings.Contains(out, "\x1b]8;;https://e.com/1\x07") {
-		t.Errorf("OSC8 開始シーケンスが無い: %q", out)
+const longEpicURL = "https://example.com/very/long/epic/url/that/exceeds/width"
+
+func TestRenderBlock_EpicRawURL(t *testing.T) {
+	m := model{}
+	r := view.Row{Space: "s", Status: state.StatusWorking, Epic: longEpicURL, Age: "1s前"}
+	// width を URL より小さくしても URL は trunc されない
+	lines := m.renderBlock(r, 20)
+
+	var urlLine string
+	for _, l := range lines {
+		if strings.Contains(l, "🔗") {
+			urlLine = l
+		}
 	}
-	if !strings.Contains(out, "\x1b]8;;\x07") {
-		t.Errorf("OSC8 終端シーケンスが無い: %q", out)
+	if urlLine == "" {
+		t.Fatalf("生URLサブ行(🔗)が無い: %#v", lines)
 	}
-	if !strings.Contains(out, "↗") {
-		t.Errorf("↗ が無い: %q", out)
+	if !strings.Contains(urlLine, longEpicURL) {
+		t.Fatalf("URL が trunc され不完全: %q", urlLine)
 	}
-	if !strings.Contains(out, "myspace") {
-		t.Errorf("名前が無い: %q", out)
+	// ヘッダ直下（lines[1]）に URL 行があること
+	if !strings.Contains(lines[1], "🔗") {
+		t.Fatalf("URL 行がヘッダ直下でない: %#v", lines)
+	}
+	// タイトルに ↗ / OSC8 が残っていないこと
+	for _, l := range lines {
+		if strings.Contains(l, "↗") {
+			t.Fatalf("↗ が残っている: %q", l)
+		}
+		if strings.Contains(l, "\x1b]8;;") {
+			t.Fatalf("OSC8 が残っている: %q", l)
+		}
 	}
 }
 
-func TestRenderHeadName_NoEpic(t *testing.T) {
-	out := renderHeadName("myspace", "")
-	if strings.Contains(out, "\x1b]8;;") {
-		t.Errorf("epic 無しで OSC8 が出た: %q", out)
-	}
-	if strings.Contains(out, "↗") {
-		t.Errorf("epic 無しで ↗ が出た: %q", out)
-	}
-	if out != "myspace" {
-		t.Errorf("プレーンな名前でない: %q", out)
+func TestRenderBlock_NoEpicNoURLLine(t *testing.T) {
+	m := model{}
+	r := view.Row{Space: "s", Status: state.StatusWorking, Age: "1s前"}
+	lines := m.renderBlock(r, 80)
+	for _, l := range lines {
+		if strings.Contains(l, "🔗") {
+			t.Fatalf("epic 無しで URL 行が出た: %q", l)
+		}
 	}
 }
 

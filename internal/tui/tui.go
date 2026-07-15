@@ -289,20 +289,21 @@ func (m model) renderBlock(r view.Row, width int) []string {
 	if r.FutureSchema {
 		name = "[要更新] " + name
 	}
-	// 見出し: 「▍ <space名[+↗]>   herdr:x  母艦:y  age」。
-	// epic があれば名前＋↗ を OSC8 リンク化（ゼロ幅シーケンス）。↗ の可視幅は
-	// budget に算入し整列がズレないようにする。見出しは常に白・太字。
+	// 見出し: 「▍ <space名>   herdr:x  母艦:y  age」。見出しは常に白・太字。
 	prefix := "▍ "
 	suffix := fmt.Sprintf("   herdr:%s  母艦:%s   %s", agent, orDash(r.Status), r.Age)
-	arrow := ""
-	if r.Epic != "" {
-		arrow = " ↗"
-	}
-	budget := max(width-runewidth.StringWidth(prefix)-runewidth.StringWidth(suffix)-runewidth.StringWidth(arrow), 4)
+	budget := max(width-runewidth.StringWidth(prefix)-runewidth.StringWidth(suffix), 4)
 	nameTrunc := runewidth.Truncate(name, budget, "…")
-	head := prefix + renderHeadName(nameTrunc, r.Epic) + suffix
+	head := prefix + nameTrunc + suffix
 
 	lines := []string{headerStyle.Render(head)}
+
+	// エピック URL はヘッダ直下に生URLの dim サブ行で出す（epic 非空時のみ）。
+	// herdr が OSC8 を消費し Ghostty で開けないため、Ghostty の自動URL検出に頼る。
+	// 完全URLが1行に途切れず必要なので、この行だけは truncate しない。
+	if r.Epic != "" {
+		lines = append(lines, dimStyle.Render("    🔗 "+r.Epic))
+	}
 
 	// 1 列 TODO: 済み(✓緑)→いま(→太字白)→予定(□グレー) の順、1 項目 1 行。
 	for _, t := range r.DoneItems {
@@ -331,16 +332,6 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
-}
-
-// renderHeadName は space 名を返す。epic が非空なら「名前＋↗」を OSC8
-// ハイパーリンク（ESC]8;;URL BEL … ESC]8;;BEL、ゼロ幅シーケンス）で包む。
-// epic が空なら名前をそのまま返す（↗・リンクなし）。
-func renderHeadName(name, epic string) string {
-	if epic == "" {
-		return name
-	}
-	return "\x1b]8;;" + epic + "\x07" + name + " ↗" + "\x1b]8;;\x07"
 }
 
 func join(lines []string) string {
